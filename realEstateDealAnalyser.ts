@@ -11,7 +11,7 @@ interface RealEstateAnalysisResult {
   appreciation: number;
   totalReturn: number; // Including principal reduction and appreciation
   ROI: number;
-  purchasePrice?: number; // Adjusted sale price to meet criteria
+  purchasePrice: number; // Adjusted sale price to meet criteria
 }
 
 function realEstateAnalyzer(
@@ -43,12 +43,7 @@ function realEstateAnalyzer(
           monthlyPropertyInsurance
       );
 
-      if (result.ROI < minimumROI || result.annualCashflow < minimumCashflow) {
-          purchasePrice -= 1000; // Adjust sale price downwards by $1000
-      }
-  } while (result.ROI < minimumROI || result.annualCashflow < minimumCashflow);
-
-  result.purchasePrice = purchasePrice; // Add adjusted sale price to the result
+  } while ((result.ROI < minimumROI || result.annualCashflow < minimumCashflow) && (purchasePrice -= 1000));
 
   return result;
 }
@@ -64,35 +59,28 @@ function calculateAnalysis(
   monthlyPropertyTax: number,
   monthlyPropertyInsurance: number
 ): RealEstateAnalysisResult {
-  // Calculate loan amount
+  // Calculate loan details
   const loanAmount = salePrice * (1 - downpaymentPercentage);
-
-  // Calculate monthly mortgage payment
   const monthlyInterestRate = mortgageInterestRate / 12 / 100;
   const n = mortgageAmortization * 12;
-  const monthlyMortgagePayment =
-      (loanAmount * monthlyInterestRate) / (1 - Math.pow(1 + monthlyInterestRate, -n));
-
-  // Calculate principal reduction portion of the monthly mortgage payment
-  const principalReduction = monthlyMortgagePayment - (loanAmount * monthlyInterestRate);
-
-  // Calculate annual HOA dues
-  const annualHoaDues = monthlyHoaDues * 12;
-
-  // Calculate annual CapEx
-  const annualCapEx = salePrice * 0.01; // Assuming 1% of sale price annually
 
   // Calculate annual expenses
+  const monthlyMortgagePayment =
+      (loanAmount * monthlyInterestRate) / (1 - Math.pow(1 + monthlyInterestRate, -n));
+  const annualHoaDues = monthlyHoaDues * 12;
+  const annualCapEx = salePrice * 0.01; // Assuming 1% of sale price annually
   const annualPropertyTax = monthlyPropertyTax * 12;
   const annualPropertyInsurance = monthlyPropertyInsurance * 12;
-  const annualExpenses = monthlyMortgagePayment * 12 + annualPropertyTax + annualPropertyInsurance + annualHoaDues + annualCapEx;
+  const annualVacancyCosts = (monthlyRent / 4) * expectedVacancyWeeks;
+  const annualExpenses = monthlyMortgagePayment * 12 + annualPropertyTax + annualPropertyInsurance + annualHoaDues + annualCapEx + annualVacancyCosts;
 
   // Calculate annual cashflow (rental income - expenses)
   const annualRent = monthlyRent * 12;
   const annualCashflow = annualRent - annualExpenses;
 
   // Calculate total return (including principal reduction and appreciation)
-  const appreciation = salePrice * 0.03; // Assuming 3% appreciation annually
+  const principalReduction = monthlyMortgagePayment - (loanAmount * monthlyInterestRate);
+  const appreciation = salePrice * 0.048; // Assuming 4.8% appreciation annually
   const totalReturn = annualCashflow + principalReduction + appreciation;
 
   // Calculate final ROI
@@ -112,6 +100,7 @@ function calculateAnalysis(
       appreciation,
       totalReturn,
       ROI,
+      purchasePrice: salePrice,
   };
 }
 
