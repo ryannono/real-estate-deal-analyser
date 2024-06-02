@@ -23,7 +23,7 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
 
   monthlyRent: number;
 
-  purchasePrice: number;
+  private purchasePrice: number;
 
   constructor(input: RealestateAnalysisInput) {
     Object.assign(this, {
@@ -33,6 +33,27 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
     this.purchasePrice = this.salePrice;
   }
 
+  private currencyFormatter = new Intl.NumberFormat('en-CA', {
+    style: 'currency',
+    currency: 'CAD',
+    signDisplay: 'auto',
+  });
+
+  private percentageFormatter = new Intl.NumberFormat('en-CA', {
+    style: 'percent',
+  });
+
+  private formatCurrency(number: number, sign = false) {
+    this.currencyFormatter.resolvedOptions().signDisplay = sign
+      ? 'always'
+      : 'auto';
+    return this.currencyFormatter.format(number);
+  }
+
+  private formatPercentage(number) {
+    return this.percentageFormatter.format(number / 100);
+  }
+
   private getLoanAmount() {
     return this.purchasePrice * (1 - this.downpaymentPercentage / 100);
   }
@@ -40,10 +61,13 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
   private getMonthlyMortgagePayment() {
     const n = this.mortgageAmortization * 12;
     const monthlyMortgageInterestRate = this.annualMortgageInterestRate / 12;
+    const PMI =
+      this.downpaymentPercentage >= 20 ? 0 : this.purchasePrice * 0.015;
 
     return (
+      PMI +
       (this.getLoanAmount() * monthlyMortgageInterestRate) /
-      (1 - (1 + monthlyMortgageInterestRate) ** -n)
+        (1 - (1 + monthlyMortgageInterestRate) ** -n)
     );
   }
 
@@ -69,7 +93,7 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
 
     return {
       value: totalAnnualExpenses,
-      markdown: RealEstateDealAnalyser.objToMarkdown(
+      markdown: this.objToMarkdown(
         {
           ...annualExpenses,
           totalAnnualExpenses,
@@ -87,7 +111,7 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
 
     return {
       value: totalAnnualCashflow,
-      markdown: RealEstateDealAnalyser.objToMarkdown(
+      markdown: this.objToMarkdown(
         {
           annualRent,
           annualExpenses,
@@ -125,7 +149,7 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
 
     return {
       value: totalAnnualReturn,
-      markdown: RealEstateDealAnalyser.objToMarkdown(
+      markdown: this.objToMarkdown(
         {
           annualCashflow,
           annualPrincipalReduction,
@@ -146,7 +170,7 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
 
     return {
       value: totalAnnualROI,
-      markdown: RealEstateDealAnalyser.objToMarkdown(
+      markdown: this.objToMarkdown(
         {
           annualReturn,
           downPayment,
@@ -158,27 +182,46 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
     };
   }
 
-  adjustToNeededPurchasePrice(minimumROI = 13, minimumCashflow = 0) {
-    while (
-      this.getAnnualROI().value < minimumROI ||
-      this.getAnnualCashflow().value < minimumCashflow
-    ) {
-      this.purchasePrice -= 1000;
-      if (this.purchasePrice <= 0) {
-        throw new Error(
-          'Purchase price adjustment resulted in unrealistic value.'
-        );
+  adjustToMaxPurchasePrice(minimumROI = 13, minimumCashflow = 0) {
+    let left = 0;
+    let right = this.purchasePrice > 0 ? this.purchasePrice : 1000;
+
+    while (left < right) {
+      const mid = Math.floor((left + right) / 2);
+      this.purchasePrice = mid;
+
+      if (
+        this.getAnnualROI().value >= minimumROI &&
+        this.getAnnualCashflow().value >= minimumCashflow
+      ) {
+        left = mid;
+        right *= 2;
+      } else {
+        right = mid - 1;
       }
     }
+
+    this.purchasePrice = left;
 
     return this;
   }
 
+  resetPurchasePriceAdjustment() {
+    this.purchasePrice = this.salePrice;
+  }
+
   getFullResultsMarkdown() {
-    return `# Good buy @ ${this.purchasePrice} $`.concat(
-      this.purchasePrice === this.salePrice
-        ? ''
-        : ` (-${this.salePrice - this.purchasePrice} from sales price)`,
+    const isPurchasePriceAdjusted = this.purchasePrice !== this.salePrice;
+    const introString = isPurchasePriceAdjusted
+      ? `# Maximum purchase price is ${this.formatCurrency(
+          this.purchasePrice
+        )} (${this.formatCurrency(
+          this.purchasePrice - this.salePrice,
+          true
+        )} from sales price)`
+      : `# Results at sale price of ${this.formatCurrency(this.salePrice)}`;
+
+    return introString.concat(
       '\n\n',
       this.getAnnualExpenses().markdown,
       this.getAnnualCashflow().markdown,
@@ -187,7 +230,7 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
     );
   }
 
-  static objToMarkdown<T extends Record<string, number>>(
+  private objToMarkdown<T extends Record<string, number>>(
     obj: T,
     markdownTitle: string
   ) {
@@ -198,8 +241,10 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
 
     const markdown = Object.entries(obj).reduce((acc, [k, v], i, arr) => {
       const str = acc.concat(
-        `- ${camelCaseToRegular(k)}: ${v} ${
-          k.toLowerCase().endsWith('roi') ? '%' : '$'
+        `- ${camelCaseToRegular(k)}: ${
+          k.toLowerCase().endsWith('roi')
+            ? this.formatPercentage(v)
+            : this.formatCurrency(v)
         }\n`
       );
 
@@ -226,6 +271,6 @@ console.log(
       monthlyRent: 2950
     }
   )
-  .adjustToNeededPurchasePrice()
+  .adjustToMaxPurchasePrice()
   .getFullResultsMarkdown()
 )
