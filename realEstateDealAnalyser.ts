@@ -1,124 +1,231 @@
-interface RealEstateAnalysisResult {
-  loanAmount: number;
-  monthlyMortgagePayment: number;
-  annualPropertyTax: number;
-  annualPropertyInsurance: number;
-  annualHoaDues: number;
-  annualCapEx: number;
-  annualRent: number;
-  annualExpenses: number;
-  annualCashflow: number;
-  appreciation: number;
-  totalReturn: number; // Including principal reduction and appreciation
-  ROI: number;
-  purchasePrice: number; // Adjusted sale price to meet criteria
+interface RealestateAnalysisInput {
+  salePrice: number;
+  downpaymentPercentage: number;
+  annualMortgageInterestRate: number;
+  mortgageAmortization: number;
+  monthlyHoaDues: number;
+  expectedVacancyWeeks: number;
+  monthlyRent: number;
 }
 
-function realEstateAnalyzer(
-  salePrice: number,
-  downpaymentPercentage: number,
-  mortgageInterestRate: number,
-  mortgageAmortization: number,
-  monthlyHoaDues: number,
-  expectedVacancyWeeks: number,
-  monthlyRent: number, // Added monthly rent as input
-  monthlyPropertyTax: number = salePrice * 0.015 / 12, // Default to 1.5% of sale price annually divided by 12
-  monthlyPropertyInsurance: number = 1750 / 12 // Default to 1750 annually divided by 12
-): RealEstateAnalysisResult {
-  const minimumROI = 13;
-  const minimumCashflow = 0;
-  let result: RealEstateAnalysisResult;
-  let purchasePrice = salePrice;
+class RealEstateDealAnalyser implements RealestateAnalysisInput {
+  salePrice: number;
 
-  do {
-      result = calculateAnalysis(
-          purchasePrice,
-          downpaymentPercentage,
-          mortgageInterestRate,
-          mortgageAmortization,
-          monthlyHoaDues,
-          expectedVacancyWeeks,
-          monthlyRent,
-          monthlyPropertyTax,
-          monthlyPropertyInsurance
+  downpaymentPercentage: number;
+
+  annualMortgageInterestRate: number;
+
+  mortgageAmortization: number;
+
+  monthlyHoaDues: number;
+
+  expectedVacancyWeeks: number;
+
+  monthlyRent: number;
+
+  purchasePrice: number;
+
+  constructor(input: RealestateAnalysisInput) {
+    Object.assign(this, {
+      ...input,
+      annualMortgageInterestRate: input.annualMortgageInterestRate / 100,
+    });
+    this.purchasePrice = this.salePrice;
+  }
+
+  private getLoanAmount() {
+    return this.purchasePrice * (1 - this.downpaymentPercentage / 100);
+  }
+
+  private getMonthlyMortgagePayment() {
+    const n = this.mortgageAmortization * 12;
+    const monthlyMortgageInterestRate = this.annualMortgageInterestRate / 12;
+
+    return (
+      (this.getLoanAmount() * monthlyMortgageInterestRate) /
+      (1 - (1 + monthlyMortgageInterestRate) ** -n)
+    );
+  }
+
+  private getDownPayment() {
+    return this.purchasePrice * (this.downpaymentPercentage / 100);
+  }
+
+  getAnnualExpenses() {
+    // Calculate annual expenses
+    const annualExpenses = {
+      annualMortgagePayment: this.getMonthlyMortgagePayment() * 12,
+      annualHoaDues: this.monthlyHoaDues * 12,
+      annualCapEx: this.purchasePrice * 0.01, // Assuming 1% of purchase price annually
+      annualPropertyTax: this.purchasePrice * 0.015, // Assuming 1.5% of purchase price annually
+      annualPropertyInsurance: 1750, // Uses generalized avg
+      annualVacancyCosts: (this.monthlyRent / 4) * this.expectedVacancyWeeks,
+    };
+
+    const totalAnnualExpenses = Object.values(annualExpenses).reduce(
+      (acc, v) => acc + v,
+      0
+    );
+
+    return {
+      value: totalAnnualExpenses,
+      markdown: RealEstateDealAnalyser.objToMarkdown(
+        {
+          ...annualExpenses,
+          totalAnnualExpenses,
+        },
+        'Annual expenses'
+      ),
+    };
+  }
+
+  getAnnualCashflow() {
+    const annualRent = this.monthlyRent * 12;
+    const annualExpenses = this.getAnnualExpenses().value;
+
+    const totalAnnualCashflow = annualRent - annualExpenses;
+
+    return {
+      value: totalAnnualCashflow,
+      markdown: RealEstateDealAnalyser.objToMarkdown(
+        {
+          annualRent,
+          annualExpenses,
+          totalAnnualCashflow,
+        },
+        'Annual cashflow'
+      ),
+    };
+  }
+
+  getAnnualReturn() {
+    const annualCashflow = this.getAnnualCashflow().value;
+
+    // Calculate annual principal paydown
+    let annualPrincipalReduction = 0;
+    for (
+      let i = 0,
+        remainingLoanBalance = this.getLoanAmount(),
+        monthlyMortgageInterestRate = this.annualMortgageInterestRate / 12;
+      i < 12;
+      i += 1
+    ) {
+      const interestPayment =
+        remainingLoanBalance * monthlyMortgageInterestRate;
+      const principalPayment =
+        this.getMonthlyMortgagePayment() - interestPayment;
+      annualPrincipalReduction += principalPayment;
+      remainingLoanBalance -= principalPayment;
+    }
+
+    const annualAppreciation = this.purchasePrice * 0.048; // Assuming 4.8% appreciation annually
+
+    const totalAnnualReturn =
+      annualCashflow + annualPrincipalReduction + annualAppreciation;
+
+    return {
+      value: totalAnnualReturn,
+      markdown: RealEstateDealAnalyser.objToMarkdown(
+        {
+          annualCashflow,
+          annualPrincipalReduction,
+          annualAppreciation,
+          totalAnnualReturn,
+        },
+        'Annual return'
+      ),
+    };
+  }
+
+  getAnnualROI() {
+    const annualReturn = this.getAnnualReturn().value;
+    const downPayment = this.getDownPayment();
+    const closingCosts = this.purchasePrice * 0.02; // 2% of purchase price;
+
+    const totalAnnualROI = (annualReturn / (downPayment + closingCosts)) * 100;
+
+    return {
+      value: totalAnnualROI,
+      markdown: RealEstateDealAnalyser.objToMarkdown(
+        {
+          annualReturn,
+          downPayment,
+          closingCosts,
+          totalAnnualROI,
+        },
+        'Annual ROI'
+      ),
+    };
+  }
+
+  adjustToNeededPurchasePrice(minimumROI = 13, minimumCashflow = 0) {
+    while (
+      this.getAnnualROI().value < minimumROI ||
+      this.getAnnualCashflow().value < minimumCashflow
+    ) {
+      this.purchasePrice -= 1000;
+      if (this.purchasePrice <= 0) {
+        throw new Error(
+          'Purchase price adjustment resulted in unrealistic value.'
+        );
+      }
+    }
+
+    return this;
+  }
+
+  getFullResultsMarkdown() {
+    return `# Good buy @ ${this.purchasePrice} $`.concat(
+      this.purchasePrice === this.salePrice
+        ? ''
+        : ` (-${this.salePrice - this.purchasePrice} from sales price)`,
+      '\n\n',
+      this.getAnnualExpenses().markdown,
+      this.getAnnualCashflow().markdown,
+      this.getAnnualReturn().markdown,
+      this.getAnnualROI().markdown
+    );
+  }
+
+  static objToMarkdown<T extends Record<string, number>>(
+    obj: T,
+    markdownTitle: string
+  ) {
+    const camelCaseToRegular = (camelCaseString: string) =>
+      camelCaseString
+        .replace(/([a-z])([A-Z])/g, '$1 $2') // Insert space between camel case words
+        .replace(/^./, (match) => match.toUpperCase()); // Capitalize the first letter
+
+    const markdown = Object.entries(obj).reduce((acc, [k, v], i, arr) => {
+      const str = acc.concat(
+        `- ${camelCaseToRegular(k)}: ${v} ${
+          k.toLowerCase().endsWith('roi') ? '%' : '$'
+        }\n`
       );
 
-  } while ((result.ROI < minimumROI || result.annualCashflow < minimumCashflow) && (purchasePrice -= 1000));
+      if (i === arr.length - 1) {
+        str.concat('-'.repeat(50), '\n\n');
+      }
 
-  return result;
+      return str;
+    }, `## ${markdownTitle}:\n\n`);
+
+    return markdown;
+  }
 }
 
-function calculateAnalysis(
-  salePrice: number,
-  downpaymentPercentage: number,
-  mortgageInterestRate: number,
-  mortgageAmortization: number,
-  monthlyHoaDues: number,
-  expectedVacancyWeeks: number,
-  monthlyRent: number,
-  monthlyPropertyTax: number,
-  monthlyPropertyInsurance: number
-): RealEstateAnalysisResult {
-  // Calculate loan details
-  const loanAmount = salePrice * (1 - downpaymentPercentage);
-  const monthlyInterestRate = mortgageInterestRate / 12 / 100;
-  const n = mortgageAmortization * 12;
-
-  // Calculate annual expenses
-  const monthlyMortgagePayment =
-      (loanAmount * monthlyInterestRate) / (1 - Math.pow(1 + monthlyInterestRate, -n));
-  const annualHoaDues = monthlyHoaDues * 12;
-  const annualCapEx = salePrice * 0.01; // Assuming 1% of sale price annually
-  const annualPropertyTax = monthlyPropertyTax * 12;
-  const annualPropertyInsurance = monthlyPropertyInsurance * 12;
-  const annualVacancyCosts = (monthlyRent / 4) * expectedVacancyWeeks;
-  const annualExpenses = monthlyMortgagePayment * 12 + annualPropertyTax + annualPropertyInsurance + annualHoaDues + annualCapEx + annualVacancyCosts;
-
-  // Calculate annual cashflow (rental income - expenses)
-  const annualRent = monthlyRent * 12;
-  const annualCashflow = annualRent - annualExpenses;
-
-  // Calculate total return (including principal reduction and appreciation)
-  const principalReduction = monthlyMortgagePayment - (loanAmount * monthlyInterestRate);
-  const appreciation = salePrice * 0.048; // Assuming 4.8% appreciation annually
-  const totalReturn = annualCashflow + principalReduction + appreciation;
-
-  // Calculate final ROI
-  const totalInvestment = salePrice * downpaymentPercentage;
-  const ROI = (totalReturn / totalInvestment) * 100;
-
-  return {
-      loanAmount,
-      monthlyMortgagePayment,
-      annualPropertyTax,
-      annualPropertyInsurance,
-      annualHoaDues,
-      annualCapEx,
-      annualRent,
-      annualExpenses,
-      annualCashflow,
-      appreciation,
-      totalReturn,
-      ROI,
-      purchasePrice: salePrice,
-  };
-}
-
-
-// Example usage:
-const result: RealEstateAnalysisResult = realEstateAnalyzer(
-  375000, // salePrice
-  0.2, // downpaymentPercentage
-  6.5, // mortgageInterestRate
-  25, // mortgageAmortization
-  0, // monthlyHoaDues
-  3, // expectedVacancyWeeks
-  2950 // monthlyRent
-);
-
-console.log("Results:");
-for (const [key, value] of Object.entries(result)) {
-  console.log(`${key}: ${value}`);
-}
-console.log(`Sale Price Adjustment: ${result.purchasePrice - 375000}`);
-
+console.log(
+  new RealEstateDealAnalyser(
+    {
+      salePrice: 375000,
+      downpaymentPercentage: 20,
+      annualMortgageInterestRate: 5.15,
+      mortgageAmortization: 25,
+      monthlyHoaDues: 0,
+      expectedVacancyWeeks: 3,
+      monthlyRent: 2950
+    }
+  )
+  .adjustToNeededPurchasePrice()
+  .getFullResultsMarkdown()
+)
