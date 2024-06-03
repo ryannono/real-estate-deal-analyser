@@ -62,7 +62,7 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
     const n = this.mortgageAmortization * 12;
     const monthlyMortgageInterestRate = this.annualMortgageInterestRate / 12;
     const PMI =
-      this.downpaymentPercentage >= 20 ? 0 : this.purchasePrice * 0.015;
+      this.downpaymentPercentage >= 20 ? 0 : (this.purchasePrice * 0.015) / 12;
 
     return (
       PMI +
@@ -183,21 +183,37 @@ class RealEstateDealAnalyser implements RealestateAnalysisInput {
   }
 
   adjustToMaxPurchasePrice(minimumROI = 13, minimumCashflow = 0) {
+    const checkDealCriteria = () => {
+      const annualROI = this.getAnnualROI().value;
+      const annualCashflow = this.getAnnualCashflow().value;
+
+      if (annualROI >= minimumROI && annualCashflow >= minimumCashflow) {
+        return Math.floor(annualCashflow) === minimumCashflow ? 'max' : 'good';
+      }
+
+      return 'bad';
+    };
+
+    // Finding initial upper bound
+    this.purchasePrice = 1;
+    while (checkDealCriteria() !== 'bad') {
+      this.purchasePrice *= 2;
+    }
+
+    // Binary search within bounds
     let left = 0;
-    let right = this.purchasePrice > 0 ? this.purchasePrice : 1000;
+    let right = this.purchasePrice;
 
     while (left < right) {
-      const mid = Math.floor((left + right) / 2);
-      this.purchasePrice = mid;
+      this.purchasePrice = Math.floor((left + right) / 2); // set to middle
 
-      if (
-        this.getAnnualROI().value >= minimumROI &&
-        this.getAnnualCashflow().value >= minimumCashflow
-      ) {
-        left = mid;
-        right *= 2;
+      const dealAnalysisResult = checkDealCriteria();
+
+      if (dealAnalysisResult === 'bad') {
+        right = this.purchasePrice - 1;
       } else {
-        right = mid - 1;
+        left = this.purchasePrice;
+        if (dealAnalysisResult === 'max') break;
       }
     }
 
